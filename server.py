@@ -1,16 +1,19 @@
 from flask import Flask, request, render_template, jsonify
 from flask_cors import CORS
-from transformers import T5Tokenizer, T5ForConditionalGeneration
+from transformers import T5Tokenizer, T5ForConditionalGeneration, GPT2Tokenizer, GPT2LMHeadModel
 import torch
 import os
 
 # Configuración inicial
 servidor = Flask(__name__)
-CORS(servidor)  
+CORS(servidor)  # Habilita CORS
 
 # Cargar modelo y tokenizer
 MODEL_NAME = "t5-large"
 tokenizer = T5Tokenizer.from_pretrained(MODEL_NAME)
+
+gpt2_tokenizer = GPT2Tokenizer.from_pretrained("gpt2-medium")
+gpt2_model = GPT2LMHeadModel.from_pretrained("gpt2-medium")
 
 # Configurar dispositivo (GPU si está disponible)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -22,6 +25,24 @@ servidor.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Ruta para generación de imágenes (nueva)
+@servidor.route('/generar_imagen', methods=['POST'])
+def generar_imagen():
+    prompt = request.form.get('prompt', '')
+    if not prompt:
+        return "Prompt requerido", 400
+    
+    # Usando API gratuita de Stable Diffusion
+    response = requests.post(
+        "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0",
+        headers={"Authorization": "Bearer TU_API_KEY"},
+        json={"inputs": prompt}
+    )
+    
+    if response.status_code == 200:
+        return response.content, 200, {'Content-Type': 'image/png'}
+    else:
+        return f"Error: {response.text}", 500
+
 @servidor.route('/generate_questions', methods=['POST'])
 def generate_questions():
     try:
@@ -97,27 +118,32 @@ def procesar_pregunta():
         contexto = data.get("contexto", "").strip()
         
         if not pregunta:
-            return jsonify({"error": "Se requiere una pregunta"}), 400
+            return jsonify({"error": "Question is required"}), 400
 
-        # Mejor formato para respuestas (no solo preguntas)
+        # Improved prompt engineering
         if contexto:
-            input_text = f"respond to '{pregunta}' using this context: {contexto}"
+            input_text = f"Question: {pregunta}\nContext: {contexto}\nProvide a detailed, structured answer:"
         else:
-            input_text = f"answer this question: {pregunta}"
+            input_text = f"Answer this question in detail: {pregunta}"
         
-        input_ids = tokenizer.encode(input_text, return_tensors="pt", max_length=512, truncation=True)
+        inputs = tokenizer.encode(input_text, return_tensors="pt", max_length=512, truncation=True).to(device)
         
+        # Improved generation parameters
         outputs = model.generate(
-            input_ids,
-            max_length=200,
+            inputs,
+            max_length=512,
             num_beams=5,
+            no_repeat_ngram_size=3,
             early_stopping=True,
-            temperature=0.7  # Añadido para más variedad
+            temperature=0.7,
+            top_k=50,
+            top_p=0.95,
+            do_sample=True
         )
         
         respuesta = tokenizer.decode(outputs[0], skip_special_tokens=True)
         
-        # Limpiar respuesta (opcional)
+        # Post-processing to clean the output
         respuesta = respuesta.replace(pregunta, "").strip()
         respuesta = respuesta.split("Answer:")[-1].strip()  # Remove any remaining prompt fragments
         return jsonify({"respuesta": respuesta})
@@ -126,7 +152,7 @@ def procesar_pregunta():
         return jsonify({"error": str(e)}), 500
 
 
-# Hacer preguntassss
+# Endpoint específico para preguntas con GPT-2
 @servidor.route("/procesar_pregunta_gpt2", methods=["POST"])
 def procesar_pregunta_gpt2():
     try:
@@ -249,12 +275,13 @@ def procesar_resumen():
 
 
 # Generar pregunta (redirige a la página de pregunta)
+# Versión corregida con ambos métodos
 @servidor.route("/generar_pregunta", methods=["GET", "POST"])
 def generar_pregunta():
     if request.method == "POST":
         try:
             tema = request.form.get("tema", "general")  # Usamos request.form si viene del formulario HTML
-            pregunta_generada = generar_pregunta_ia(tema) 
+            pregunta_generada = generar_pregunta_ia(tema)  # Tu función personalizada
             return render_template("generar_preguntas.html", pregunta=pregunta_generada)
         except Exception as e:
             return render_template("generar_preguntas.html", error=str(e))
@@ -263,8 +290,6 @@ def generar_pregunta():
         return render_template("generar_preguntas.html")
     
 
-
-# este no
 def generar_pregunta_ia(tema: str) -> str:
     # Preparamos el input para el modelo
     input_text = f"Genera una pregunta sobre el tema: {tema}"
@@ -279,6 +304,8 @@ def generar_pregunta_ia(tema: str) -> str:
     pregunta_generada = tokenizer.decode(output[0], skip_special_tokens=True)
 
     return pregunta_generada
+
+# Traducción de texto (redirige a la página de traducción)
 
 if __name__ == "__main__":
     servidor.run(port=4000, debug=True)
