@@ -1,4 +1,4 @@
-                           🤖 Generador de Preguntas y Resúmenes con Transformers (Flask + T5 + GPT) 🤖
+                    🤖 Generador de Preguntas y Resúmenes con Transformers (Flask + T5 + GPT) 🤖
 <br><br>
 
 Este proyecto es una aplicación web construida con Flask y HuggingFace Transformers que permite: <br>
